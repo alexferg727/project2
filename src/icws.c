@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
     char ipAddress[INET_ADDRSTRLEN]; //incomming IP-address to server with length
 
 
-    portnumber= atoi(argv[1]);  //second parameter passed from main into portnumber
+    portnumber= 8080;  //second parameter passed from main into portnumber
 
 
     if((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)  //trying to create socket address-family
@@ -81,6 +81,12 @@ int main(int argc, char *argv[])
 
 //Responds to clients request
     printf("Send Response:\n\n");
+
+// HTTP/1.1 200 OK
+// Content-Type: text/html
+// Content-Length: 123
+// Server: MyWebServer/1.0
+
     fgets(buffert, SIZE - 1, stdin);
 
     if(send(sockfd_current, buffert, strlen(buffert) + 1, 0) == -1) 

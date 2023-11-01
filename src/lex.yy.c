@@ -505,27 +505,6 @@ extern int parsing_offset;	/* Current offset in the buffer */
 
 
 #line 507 "src/lex.yy.c"
-/*
- * Following is a list of rules specified in RFC 2616 section 2:
- *
- * Lookup Table
- * cr              \x0d
- * lf              \x0a
- * sp              \x20
- * ht              \x09
- * quote           \"
- * digit           [0-9]
- * ctl             [\x0-\x1f\x7f]
- * upalpha         [A-Z]
- * loalpha         [a-z]
- * alpha	       [A-Za-z]
- * char            [\x0-\x7f]
- * octet           [\x0-\x1f\xff]
- * crlf            {cr}{lf}
- * lws             \x0d\x0a(\x20|\x09)*
- * hex             [ABCDEFabcdef0-9]
- * separators	   [\{\}\(\)\<\>@,;:\\\"/\[\]?=\x20\x09]
- */
 /**
  * Declarations
  */
@@ -535,21 +514,8 @@ extern int parsing_offset;	/* Current offset in the buffer */
 /* Matches a space */
 /* Matches a any combination of spaces and horizontal tabs */
 /* Matches a CRLF followed by a ws */
-/*
- * matches following characters: (RFC 2616, Section 2.2)
- * ( ) < > @ , ; : \ " / [ ] ? = { } <space> <tab>
- */
 /* Matches a CTL*/
-/*
- * (RFC 2616, Section 2.2)
- * This rule matches _ANY_ character _EXCEPT_ separators (see above),
- * and control characters (ascii values 0x0 - 0x1F and 0x7f).
- *
- * token_char = (   char    -       ctl      -               separators             )
- *
- * Note: A token can be detected as any combination of token characters.
- */
-#line 552 "src/lex.yy.c"
+#line 518 "src/lex.yy.c"
 
 #define INITIAL 0
 
@@ -766,10 +732,10 @@ YY_DECL
 		}
 
 	{
-#line 123 "src/lexer.l"
+#line 88 "src/lexer.l"
 
 
-#line 126 "src/lexer.l"
+#line 91 "src/lexer.l"
 /*
  * Actions
  *
@@ -783,7 +749,7 @@ YY_DECL
  */
 
 
-#line 786 "src/lex.yy.c"
+#line 752 "src/lex.yy.c"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -842,7 +808,7 @@ do_action:	/* This label is used only to access EOF actions. */
 
 case 1:
 YY_RULE_SETUP
-#line 139 "src/lexer.l"
+#line 104 "src/lexer.l"
 {
 	/* Rule 0: Backslash */
 
@@ -860,7 +826,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 2:
 YY_RULE_SETUP
-#line 154 "src/lexer.l"
+#line 119 "src/lexer.l"
 {
 	/* Rule 1: Slash */
 
@@ -879,7 +845,7 @@ YY_RULE_SETUP
 case 3:
 /* rule 3 can match eol */
 YY_RULE_SETUP
-#line 169 "src/lexer.l"
+#line 134 "src/lexer.l"
 {
 	/* Rule 2: CRLF */
 
@@ -895,7 +861,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 4:
 YY_RULE_SETUP
-#line 182 "src/lexer.l"
+#line 147 "src/lexer.l"
 {
 	/* Rule 3: Space */
 
@@ -908,7 +874,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 5:
 YY_RULE_SETUP
-#line 192 "src/lexer.l"
+#line 157 "src/lexer.l"
 {
 	/* Rule 4: A sequence of white spaces */
 
@@ -922,7 +888,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 6:
 YY_RULE_SETUP
-#line 203 "src/lexer.l"
+#line 168 "src/lexer.l"
 {
 	/* Rule 5: A digit */
 
@@ -935,7 +901,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 7:
 YY_RULE_SETUP
-#line 213 "src/lexer.l"
+#line 178 "src/lexer.l"
 {
 	/* Rule 6: A dot */
 
@@ -946,7 +912,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 8:
 YY_RULE_SETUP
-#line 221 "src/lexer.l"
+#line 186 "src/lexer.l"
 {
 	/* Rule 7: A colon */
 
@@ -957,7 +923,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 9:
 YY_RULE_SETUP
-#line 229 "src/lexer.l"
+#line 194 "src/lexer.l"
 {
 	/* Rule 8: A separator */
 
@@ -968,7 +934,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 10:
 YY_RULE_SETUP
-#line 237 "src/lexer.l"
+#line 202 "src/lexer.l"
 {
 	/* Rule 9: A character allowed in a token */
 
@@ -984,7 +950,7 @@ YY_RULE_SETUP
 case 11:
 /* rule 11 can match eol */
 YY_RULE_SETUP
-#line 249 "src/lexer.l"
+#line 214 "src/lexer.l"
 {
 	/* Rule 10: Linear white spaces */
 
@@ -995,7 +961,7 @@ YY_RULE_SETUP
 case 12:
 /* rule 12 can match eol */
 YY_RULE_SETUP
-#line 256 "src/lexer.l"
+#line 221 "src/lexer.l"
 {
 	LPRINTF("t:ctl\n");
 	return t_ctl;
@@ -1003,10 +969,10 @@ YY_RULE_SETUP
 	YY_BREAK
 case 13:
 YY_RULE_SETUP
-#line 261 "src/lexer.l"
+#line 226 "src/lexer.l"
 ECHO;
 	YY_BREAK
-#line 1009 "src/lex.yy.c"
+#line 975 "src/lex.yy.c"
 case YY_STATE_EOF(INITIAL):
 	yyterminate();
 
@@ -2011,7 +1977,7 @@ void yyfree (void * ptr )
 
 #define YYTABLES_NAME "yytables"
 
-#line 261 "src/lexer.l"
+#line 226 "src/lexer.l"
 
 
 int yywrap(void) {

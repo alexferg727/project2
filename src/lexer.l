@@ -56,28 +56,6 @@ extern int parsing_offset;	/* Current offset in the buffer */
 
 %}
 
-/*
- * Following is a list of rules specified in RFC 2616 section 2:
- *
- * Lookup Table
- * cr              \x0d
- * lf              \x0a
- * sp              \x20
- * ht              \x09
- * quote           \"
- * digit           [0-9]
- * ctl             [\x0-\x1f\x7f]
- * upalpha         [A-Z]
- * loalpha         [a-z]
- * alpha	       [A-Za-z]
- * char            [\x0-\x7f]
- * octet           [\x0-\x1f\xff]
- * crlf            {cr}{lf}
- * lws             \x0d\x0a(\x20|\x09)*
- * hex             [ABCDEFabcdef0-9]
- * separators	   [\{\}\(\)\<\>@,;:\\\"/\[\]?=\x20\x09]
- */
-
 /**
  * Declarations
  */
@@ -100,24 +78,11 @@ ws		[\x20\x09]*
 /* Matches a CRLF followed by a ws */
 lws             \x0d\x0a(\x20|\x09)*
 
-/*
- * matches following characters: (RFC 2616, Section 2.2)
- * ( ) < > @ , ; : \ " / [ ] ? = { } <space> <tab>
- */
 separators	[\(\)\<\>@\,;:\\\"\/\[\]?=\{\}\x20\x09]
 
 /* Matches a CTL*/
 ctl	[\x0-\x1f\x7f]
 
-/*
- * (RFC 2616, Section 2.2)
- * This rule matches _ANY_ character _EXCEPT_ separators (see above),
- * and control characters (ascii values 0x0 - 0x1F and 0x7f).
- *
- * token_char = (   char    -       ctl      -               separators             )
- *
- * Note: A token can be detected as any combination of token characters.
- */
 token_char      [\x0-\x7f]{-}[\x0-\x1f\x7f]{-}[\{\}\(\)\<\>@\,;:\\\"/\[\]?=\x20\x09]
 
 %%
