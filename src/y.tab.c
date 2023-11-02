@@ -469,8 +469,8 @@ static const yytype_int8 yyrhs[] =
 static const yytype_uint8 yyrline[] =
 {
        0,   113,   113,   114,   117,   123,   127,   156,   157,   160,
-     163,   171,   175,   187,   191,   195,   200,   207,   221,   226,
-     227
+     163,   171,   175,   187,   191,   195,   200,   207,   222,   227,
+     228
 };
 #endif
 
@@ -1495,15 +1495,16 @@ yyreduce:
   case 17:
 #line 207 "src/parser.y"
     {
-	YPRINTF("request_Header:\n%s\n%s\n",(yyvsp[(1) - (7)].str),(yyvsp[(5) - (7)].str));
-    strcpy(parsing_request->headers[parsing_request->header_count].header_name, (yyvsp[(1) - (7)].str));
-	strcpy(parsing_request->headers[parsing_request->header_count].header_value, (yyvsp[(5) - (7)].str));
-	parsing_request->header_count++;
+    YPRINTF("request_Header:\n%s\n%s\n",(yyvsp[(1) - (7)].str), (yyvsp[(5) - (7)].str));
+    parsing_request->header_count++;
+    parsing_request->headers = (Request_header *)realloc(parsing_request->headers, parsing_request->header_count * sizeof(Request_header));
+    strcpy(parsing_request->headers[parsing_request->header_count - 1].header_name, (yyvsp[(1) - (7)].str));
+    strcpy(parsing_request->headers[parsing_request->header_count - 1].header_value, (yyvsp[(5) - (7)].str));
 }
     break;
 
   case 18:
-#line 221 "src/parser.y"
+#line 222 "src/parser.y"
     {
     YPRINTF("parsing_request: Matched Success.\n");
     return SUCCESS;
@@ -1511,7 +1512,7 @@ yyreduce:
     break;
 
   case 20:
-#line 227 "src/parser.y"
+#line 228 "src/parser.y"
     {
         /* Perform actions here if needed for each header */
 }
@@ -1519,7 +1520,7 @@ yyreduce:
 
 
 /* Line 1267 of yacc.c.  */
-#line 1523 "y.tab.c"
+#line 1524 "y.tab.c"
       default: break;
     }
   YY_SYMBOL_PRINT ("-> $$ =", yyr1[yyn], &yyval, &yyloc);
@@ -1733,7 +1734,7 @@ yyreturn:
 }
 
 
-#line 231 "src/parser.y"
+#line 232 "src/parser.y"
 
 
 /* C code */

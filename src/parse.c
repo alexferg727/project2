@@ -5,6 +5,8 @@
 */
 Request * parse(char *buffer, int size, int socketFd) {
   //Differant states in the state machine
+
+	printf("Content: \n%s", buffer);
 	enum {
 		STATE_START = 0, STATE_CR, STATE_CRLF, STATE_CRLFCR, STATE_CRLFCRLF
 	};
@@ -46,8 +48,11 @@ Request * parse(char *buffer, int size, int socketFd) {
 
 	}
 
+
+
     //Valid End State
 	if (state == STATE_CRLFCRLF) {
+		printf("\nhappiness\n");
 		Request *request = (Request *) malloc(sizeof(Request));
         request->header_count=0;
         //TODO: You will need to handle resizing this in parser.y
@@ -61,6 +66,8 @@ Request * parse(char *buffer, int size, int socketFd) {
 		}
 	}
     //TODO Handle Malformed Requests
+
+	//400 bad request
     printf("Parsing Failed\n");
 	return NULL;
 }

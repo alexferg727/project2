@@ -1,2 +1,4 @@
-GET /pcsa/ HTTP/1.1
-Host: pcsa.cs.muzoo.io
+GET /courses/ooc/ HTTP/1.1
+Host: cs.muic.mahidol.ac.th
+Connection: keep-alive
+
