@@ -3,22 +3,22 @@ OBJ_DIR := obj
 # all src files
 SRC := $(wildcard $(SRC_DIR)/*.c)
 # all objects
-OBJ := $(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/icws.o
+OBJ := $(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/server2.o
 # all binaries
-BIN := icws
+BIN := server2
 # C compiler
 CC  := gcc
 # C PreProcessor Flag
 CPPFLAGS := 
 # compiler flags
-CFLAGS   := -g -Wall
+CFLAGS   := -g -Wall -fsanitize=thread
 # DEPS = parse.h y.tab.h
 
 default: all
-all : icws
+all : server2
 
-icws: $(OBJ)
-	$(CC) $^ -o $@
+server2: $(OBJ)
+	$(CC) $^ -o $@ -pthread -fsanitize=thread
 
 $(SRC_DIR)/lex.yy.c: $(SRC_DIR)/lexer.l
 	flex -o $@ $^

@@ -4,11 +4,13 @@
 
 #define SUCCESS 0
 
+#define MAX_HEADER_LEN 4096
+
 //Header field
 typedef struct
 {
-	char header_name[4096];
-	char header_value[4096];
+	char header_name[MAX_HEADER_LEN];
+	char header_value[MAX_HEADER_LEN];
 } Request_header;
 
 //HTTP Request Header

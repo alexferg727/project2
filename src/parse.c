@@ -3,6 +3,7 @@
 /**
 * Given a char buffer returns the parsed request headers
 */
+
 Request * parse(char *buffer, int size, int socketFd) {
   //Differant states in the state machine
 
@@ -57,11 +58,15 @@ Request * parse(char *buffer, int size, int socketFd) {
         request->header_count=0;
         //TODO: You will need to handle resizing this in parser.y
         request->headers = (Request_header *) malloc(sizeof(Request_header)*1);
+		printf("\nhappiness2\n");
 
 		yyrestart(NULL); // reset parser state
-		set_parsing_options(buf, i, request);
+		set_parsing_options(buf, size, request);
+		printf("\nhappiness3\n");
 
 		if (yyparse() == SUCCESS) {
+			printf("\nhappiness4\n");
+
             return request;
 		}
 	}
