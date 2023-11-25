@@ -210,7 +210,7 @@ void handleCGIRequest(Request *request, const char *wwwRoot, const char *ipaddr,
         }
         close(output[0]);
 
-=        if (send(sockfd_current, response, length, 0) == -1) { 
+        if (send(sockfd_current, response, length, 0) == -1) {
             perror("Failed to send response");
             close(sockfd_current);
             pthread_exit(NULL);
