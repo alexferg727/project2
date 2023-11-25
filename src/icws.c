@@ -385,7 +385,7 @@ int main(int argc, char *argv[]) {
 
 
     //it doesnt matter what the server prints right?
-    printf("Port: %d\n", port);
+    printf("Port : %d\n", port);
     printf("wwwRoot: %s\n", wwwRoot);
     printf("NumThreads: %d\n", numThreads);
     printf("Timeout: %d\n", timeout);
