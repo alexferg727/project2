@@ -220,7 +220,7 @@ void handleCGIRequest(Request *request, const char *wwwRoot, const char *ipaddr,
 
 void* handleConnection(void* arg_param){
 
-    printf("Running\n");
+    printf("Running...\n");
 
     TaskArguments *args = (TaskArguments *)arg_param;
     int sockfd_current = args->sockfd_current;
