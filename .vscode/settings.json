@@ -1,3 +1,9 @@
 {
-    "C_Cpp.errorSquiggles": "disabled"
+    "C_Cpp.errorSquiggles": "disabled",
+    "files.associations": {
+        "__locale": "c",
+        "__string": "c",
+        "string": "c",
+        "string_view": "c"
+    }
 }

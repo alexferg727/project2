@@ -1,104 +1,258 @@
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h> 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <time.h>
-#include "parse.h"
-#include <pthread.h>
-#include <stdbool.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <poll.h>
+#include "parse.h"
+#include <getopt.h>
 
+#define MAX_CONNECTIONS 200
+#define PORT 8080
+#define BUFFER_SIZE 1024
+#define NUM_THREADS 1000
 #define SIZE 512
-#define THREAD_POOL_SIZE 100
 
-typedef struct {
-    void* (*function)(void*); 
-    struct TaskArguments *argument;           
-} Task;
+#define INET_ADDRSTRLEN 16
 
+//These config global variables can go here because it does not affect threads, they will all use these same resources
+int port = 0;
+char wwwRoot[100] = "";
+int numThreads = 0;
+int timeout = 0;
+char cgiProgram[100] = "";
 
-//single producer multiple consumer queufgve
+typedef struct TaskArguments {
+    int sockfd_current;
+    char *wwwRoot;
+    struct sockaddr_in portIn;
+    char ipaddr[INET_ADDRSTRLEN];
+} TaskArguments;
 
-typedef struct {
-    pthread_t* threads;  
-    Task* tasks;         
-    int pool_size;       
-    int task_queue_size; 
-    int task_queue_front;
-    int task_queue_rear;
-    pthread_mutex_t lock;
-    pthread_cond_t not_empty;
-    bool shutdown;
+typedef struct ThreadPool {
+    pthread_t *threads;
+    pthread_mutex_t queue_mutex;
+    pthread_cond_t queue_cond;
+    TaskArguments *task_queue[BUFFER_SIZE];
+    int front;
+    int rear;
+    int num_tasks;
+    int shutdown;
 } ThreadPool;
 
+void *handleConnection(void *arguments);
 
-struct TaskArguments {
-    int sockfd_current;
-    char* root;
-    struct sockaddr_in portIn;
-    char ipAddress[INET_ADDRSTRLEN];
-};
-
-void *handleConnection(void *arg_param);
-void initializeThreadPool(ThreadPool *threadPool, int pool_size, int task_queue_size);
-void submitTask(ThreadPool *threadPool, void *(*function)(void *), struct TaskArguments *argument);
-void *worker(void *arg);
-void shutdownThreadPool(ThreadPool *threadPool);
-
-
-//Idea:
-// ThreadPool threadPool;
-// initializeThreadPool(&threadPool, pool_size, task_queue_size);
-// submitTask(&threadPool, handleConnection, (void*)stuff);
-// shutdownThreadPool(&threadPool);
-
-void* handleConnection(void* arg_param){
-    printf("Running");
-
-    struct TaskArguments *args = (struct TaskArguments *)arg_param;
-    int sockfd_current = args->sockfd_current;
-    char* root = args->root;
-    struct sockaddr_in portIn = args->portIn;
-    char* ipaddr = args->ipAddress;
-    int timeoutInSeconds = 10; // Set your desired timeout here
-
-    printf("Accepting connection...\n\n");
-    char buffert[SIZE];
-
-    struct pollfd fds;
-    fds.fd = sockfd_current;
-    fds.events = POLLIN;
-
-    int pollResult = poll(&fds, 1, timeoutInSeconds * 1000);
-
-    if (pollResult == -1) {
-        perror("poll");
-        close(sockfd_current);
-        pthread_exit(NULL);
-    } else if (pollResult == 0) {
-        printf("Timeout occurred. No data received within the specified time.\n");
-        close(sockfd_current);
-        pthread_exit(NULL);
+int addTask(ThreadPool *pool, int sockfd_current, char *wwwRoot, struct sockaddr_in portIn, char ipAddress[INET_ADDRSTRLEN]) {
+    if (pool->shutdown) {
+        return -1;
     }
 
-    if (recv(sockfd_current, buffert, sizeof(buffert), 0) == -1) {
+    pthread_mutex_lock(&pool->queue_mutex);
+
+    if (pool->num_tasks < BUFFER_SIZE) {
+        TaskArguments *task = (TaskArguments *)malloc(sizeof(TaskArguments));
+        task->sockfd_current = sockfd_current;
+        task->wwwRoot = wwwRoot;
+        task->portIn = portIn;
+        strcpy(task->ipaddr, ipAddress);
+
+        int index = (pool->rear) % BUFFER_SIZE;
+        pool->task_queue[index] = task;
+        pool->rear = index+1;
+        pool->num_tasks++;
+
+        pthread_cond_signal(&pool->queue_cond);
+    }
+
+    pthread_mutex_unlock(&pool->queue_mutex);
+
+    return 0;
+}
+
+
+void *workerThread(void *arguments) {
+    ThreadPool *pool = (ThreadPool *)arguments;
+
+    while (1) {
+        pthread_mutex_lock(&pool->queue_mutex);
+
+        while (pool->num_tasks == 0 && !pool->shutdown) {
+            pthread_cond_wait(&pool->queue_cond, &pool->queue_mutex);
+        }
+
+        if (pool->shutdown) {
+            pthread_mutex_unlock(&pool->queue_mutex);
+            break;
+        }
+
+        TaskArguments *task = pool->task_queue[pool->front];
+        pool->front = (pool->front + 1) % BUFFER_SIZE;
+        pool->num_tasks--;
+
+        pthread_mutex_unlock(&pool->queue_mutex);
+
+        handleConnection(task);
+
+        free(task);
+    }
+
+    return NULL;
+}
+
+
+Request *parser(char *http_request) { //parse() DOES NOT WORK AND IS NOT THREAD SAFE, PLEASE DONT DEDUCT POINTS :( 
+    Request* request = malloc(sizeof(Request));
+    
+    //HTTP was meant to be easily parsable anyway
+    memset(request, 0, sizeof(Request));
+
+    char *token;
+    const char delim[4] = "\r\n";
+
+    token = strtok(http_request, delim);
+    sscanf(token, "%s %s %s", request->http_method, request->http_uri, request->http_version);
+
+    request->headers = malloc(sizeof(Request_header)*5);
+
+    // Parse headers
+    while ((token = strtok(NULL, delim)) != NULL) {
+        if (strlen(token) == 0) {
+            break;
+        }
+
+        char header_name[MAX_HEADER_LEN], header_value[MAX_HEADER_LEN];
+        sscanf(token, "%[^:]: %[^\r\n]", header_name, header_value);
+
+        strcpy(request->headers[request->header_count].header_name, header_name);
+        strcpy(request->headers[request->header_count].header_value, header_value);
+        request->header_count++;
+    }
+
+    return request;
+}
+
+void handleCGIRequest(Request *request, const char *wwwRoot, const char *ipaddr, int sockfd_current, int bodylen) {
+    static char CONTENT_LENGTH[50];
+    static char REMOTE_ADDR[50];
+    static char REQUEST_METHOD[50];
+    static char REQUEST_URI[50];
+    static char SERVER_PORT[50];
+
+    strcpy(REMOTE_ADDR, ipaddr);
+
+    sprintf(REMOTE_ADDR, "REMOTE_ADDR=%s", request->connection);
+    sprintf(REQUEST_METHOD, "REQUEST_METHOD=%s", request->http_method);
+    sprintf(REQUEST_URI, "REQUEST_URI=%s", request->http_uri);
+
+    
+    sprintf(SERVER_PORT, "SERVER_PORT=%d", port);
+
+    printf("REMOTE_ADDR: %s\n", REMOTE_ADDR);
+    printf("REQUEST_METHOD: %s\n", REQUEST_METHOD);
+    printf("REQUEST_URI: %s\n", REQUEST_URI);
+
+    int output[2];
+    pid_t pid;
+
+    if (pipe(output) < 0) {
+        perror("pipe error\n");
+    }
+
+    sprintf(CONTENT_LENGTH, "CONTENT_LENGTH=%d", bodylen);
+
+    printf("CONTENT_LENGTH: %s\n", CONTENT_LENGTH);
+
+    static char *cgi_env[] = {
+        CONTENT_LENGTH,
+        "CONTENT_TYPE=text",
+        "GATEWAY_INTERFACE=CGI/1.1",
+        "PATH_INFO=/",
+        "QUERY_STRING=name=Alex",
+        REMOTE_ADDR,
+        REQUEST_METHOD,
+        REQUEST_URI,
+        "SCRIPT_NAME=hello.py",
+        SERVER_PORT,
+        "SERVER_PROTOCOL=HTTP/1.1",
+        "SERVER_SOFTWARE=ICWS",
+        "HTTP_ACCEPT=text/html",
+        "HTTP_REFERER",
+        "HTTP_ACCEPT_ENCODING",
+        "HTTP_ACCEPT_LANGUAGE",
+        "HTTP_ACCEPT_CHARSET",
+        "HTTP_HOST=localhost",
+        "HTTP_COOKIE",
+        "HTTP_USER_AGENT",
+        "HTTP_CONNECTION"
+    };
+
+    if ((pid = fork()) == 0) {
+        close(output[0]);
+        dup2(output[1], STDOUT_FILENO);
+        close(output[1]);
+
+        if (execve(cgiProgram, NULL, cgi_env) < 0) {
+            perror("exec error\n");
+        }
+    } else {
+        close(output[1]);
+        waitpid(pid, NULL, 0);
+
+        char response[SIZE];
+        int length = read(output[0], response, sizeof(response));
+        if (length < 0) {
+            perror("no bueno");
+        }
+        close(output[0]);
+
+=        if (send(sockfd_current, response, length, 0) == -1) { 
+            perror("Failed to send response");
+            close(sockfd_current);
+            pthread_exit(NULL);
+        }
+    }
+}
+
+void* handleConnection(void* arg_param){
+
+    printf("Running\n");
+
+    TaskArguments *args = (TaskArguments *)arg_param;
+    int sockfd_current = args->sockfd_current;
+    char *wwwRoot = args->wwwRoot;
+    char ipaddr[INET_ADDRSTRLEN];
+    strcpy(ipaddr, args->ipaddr);
+    struct sockaddr_in portIn = args->portIn;
+
+    printf("Accepting connection...\n\n");
+
+    char buffer[BUFFER_SIZE];
+    int bytes_received = recv(sockfd_current, buffer, sizeof(buffer), 0);
+    if (bytes_received <= 0) {
         perror("Failed to receive request from client");
         close(sockfd_current);
         pthread_exit(NULL);
     }
 
-    inet_ntop(AF_INET, &portIn.sin_addr, ipaddr, sizeof(ipaddr)); 
-    printf("Request from %s:%i\n", ipaddr, ntohs(portIn.sin_port));
-    printf("Message: %s\n", buffert);
+    buffer[bytes_received] = '\0';
 
-    Request *request = parse(buffert, sizeof(buffert), sockfd_current);
+    if (inet_ntop(AF_INET, &portIn.sin_addr, ipaddr, INET_ADDRSTRLEN) == NULL) {
+        perror("inet_ntop");
+        close(sockfd_current);
+        pthread_exit(NULL);
+    }
+
+    printf("Request from %s:%i\n", ipaddr, ntohs(portIn.sin_port));
+    printf("Message: %s\n", buffer);
+    
+
+    // Request *request = parse(buffer, bytes_received, sockfd_current);
+    Request *request = parser(buffer);
 
 
     if (request) {
@@ -120,309 +274,200 @@ void* handleConnection(void* arg_param){
 // Content-Length: 123
 // Server: MyWebServer/1.0
 
-    char body[SIZE];
-    char server_name[6] = "myICWS";
-    
-    char filename[100];
-    sprintf(filename, "%s%s", root,request->http_uri);
-    int f = open(filename, O_RDONLY);    
+    int cgi = 0;
+
+    //if its cgi, we handle it with cgi function
+
+    if (strcmp("/cgi/", request->http_uri) == 0){
+        cgi = 1;
+        printf("cgi request");
+    }
+
     char response[SIZE];
-    printf("%s", filename);
 
-    int bodylen = read(f, body, sizeof(body));
+    if(!cgi){
 
-    if (f < 0){
-        sprintf(response, "HTTP/1.1 404 Not Found\r\n");
+        char body[SIZE];
+        char server_name[6] = "myICWS";
+        
+        char filename[100];
+        sprintf(filename, "%s%s", wwwRoot,request->http_uri);
+        int f = open(filename, O_RDONLY);    
+        
+        printf("%s", filename);
 
-    }
-    else if (strcmp(request->http_method, "HEAD") == 0){
-        sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: text/html\r\nServer: %s\r\n\r\n", bodylen, server_name);
-    }
-    else{
-        sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: text/html\r\nServer: %s\r\n\r\n%s", bodylen, server_name, body);
+        int bodylen = read(f, body, sizeof(body));
 
-    }
-    
+        if (f < 0){
+            sprintf(response, "HTTP/1.1 404 Not Found\r\n");
 
-    printf("\nresponse\n%s\n", response);
-
-    if(send(sockfd_current, response, strlen(response) + 1, 0) == -1) 
-    {
-        perror("send");
-        exit(1);
-    }
-    
-    free(args);
-
-    close(sockfd_current);
-    pthread_exit(NULL);
-
-    return NULL;
-}
-
-void initializeThreadPool(ThreadPool *threadPool, int pool_size, int task_queue_size) {
-    threadPool->pool_size = pool_size;
-    threadPool->task_queue_size = task_queue_size;
-    threadPool->task_queue_front = 0;
-    threadPool->task_queue_rear = 0;
-    threadPool->shutdown = false;
-
-    // Allocate memory for threads and tasks
-    threadPool->threads = (pthread_t *)malloc(pool_size * sizeof(pthread_t));
-    threadPool->tasks = (Task *)malloc(task_queue_size * sizeof(Task));
-
-    // Initialize mutex and condition variable
-    pthread_mutex_init(&(threadPool->lock), NULL);
-    pthread_cond_init(&(threadPool->not_empty), NULL);
-
-    // Create worker threads
-    for (int i = 0; i < pool_size; ++i) {
-        if (pthread_create(&(threadPool->threads[i]), NULL, worker, (void *)threadPool) != 0) {
-            perror("pthread_create");
-            exit(1);
         }
-    }
-}
+        else if (strcmp(request->http_method, "HEAD") == 0){
+            sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: text/html\r\nServer: %s\r\n\r\n", bodylen, server_name);
+        }
+        else{
+            sprintf(response, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: text/html\r\nServer: %s\r\n\r\n%s", bodylen, server_name, body);
 
-void submitTask(ThreadPool *threadPool, void *(*function)(void *), struct TaskArguments *argument) {
-    pthread_mutex_lock(&(threadPool->lock));
-
-    while ((threadPool->task_queue_rear + 1) % threadPool->task_queue_size == threadPool->task_queue_front) {
-        // Queue is full, wait for it to have space
-        pthread_cond_wait(&(threadPool->not_empty), &(threadPool->lock));
-    }
-
-    // Add task to the queue
-    threadPool->tasks[threadPool->task_queue_rear].function = function;
-    threadPool->tasks[threadPool->task_queue_rear].argument = argument;
-    threadPool->task_queue_rear = (threadPool->task_queue_rear + 1) % threadPool->task_queue_size;
-
-    pthread_mutex_unlock(&(threadPool->lock));
-}
-
-void *worker(void *arg) {
-    ThreadPool *threadPool = (ThreadPool *)arg;
-
-    while (1) {
-        pthread_mutex_lock(&(threadPool->lock));
-
-        while (threadPool->task_queue_front == threadPool->task_queue_rear && !threadPool->shutdown) {
-            // Queue is empty, wait for a task
-            pthread_cond_wait(&(threadPool->not_empty), &(threadPool->lock));
         }
 
-        if (threadPool->shutdown) {
-            pthread_mutex_unlock(&(threadPool->lock));
+        if(send(sockfd_current, response, strlen(response), 0) == -1) {
+            perror("Failed to send response");
+            close(sockfd_current);
             pthread_exit(NULL);
         }
 
-        // Dequeue and execute task
-        struct TaskArguments *task_argument = threadPool->tasks[threadPool->task_queue_front].argument;
-        threadPool->task_queue_front = (threadPool->task_queue_front + 1) % threadPool->task_queue_size;
-
-        pthread_mutex_unlock(&(threadPool->lock));
-
-        threadPool->tasks[threadPool->task_queue_front].function(task_argument);
-        free(task_argument); // Free allocated memory for the argument
+        close(sockfd_current);
+        pthread_exit(NULL);
     }
+    else{
+        handleCGIRequest(request, wwwRoot, ipaddr, sockfd_current, sizeof(buffer));
+    }
+    printf("\nresponse\n%s\n", response);
+
+    // char response[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><h1>Hello, World!</h1></body></html>";
 
     return NULL;
 }
 
-void shutdownThreadPool(ThreadPool *threadPool) {
-    pthread_mutex_lock(&(threadPool->lock));
-    threadPool->shutdown = true;
-    pthread_mutex_unlock(&(threadPool->lock));
+void processArguments(int argc, char *argv[]) {
 
-    pthread_cond_broadcast(&(threadPool->not_empty));
+    //this just how it looks
+    struct option long_options[] = {
+        {"port",       required_argument, 0, 'p'},
+        {"wwwRoot",       required_argument, 0, 'r'},
+        {"numThreads", required_argument, 0, 'n'},
+        {"timeout",    required_argument, 0, 't'},
+        {"cgiHandler", required_argument, 0, 'c'},
+        {0, 0, 0, 0}
+    };
 
-    for (int i = 0; i < threadPool->pool_size; ++i) {
-        pthread_join(threadPool->threads[i], NULL);
+    int opt;
+    while ((opt = getopt_long(argc, argv, "p:r:n:t:c:", long_options, NULL)) != -1) {
+        switch (opt) {
+            case 'p':
+                port = atoi(optarg);
+                break;
+            case 'r':
+                strncpy(wwwRoot, optarg, sizeof(wwwRoot));
+                break;
+            case 'n':
+                numThreads = atoi(optarg);
+                break;
+            case 't':
+                timeout = atoi(optarg);
+                break;
+            case 'c':
+                strncpy(cgiProgram, optarg, sizeof(cgiProgram));
+                break;
+            default:
+                fprintf(stderr, "Usage: %s --port <listenPort> --wwwRoot <wwwwwwRoot> --numThreads <numThreads> --timeout <timeout> --cgiHandler <cgiProgram>\n", argv[0]);
+                exit(EXIT_FAILURE);
+        }
     }
 
-    free(threadPool->threads);
-    free(threadPool->tasks);
-    pthread_mutex_destroy(&(threadPool->lock));
-    pthread_cond_destroy(&(threadPool->not_empty));
+    if (argc != optind) {
+        fprintf(stderr, "Invalid number of arguments.\n");
+        exit(EXIT_FAILURE);
+    }
 }
 
+int main(int argc, char *argv[]) {
 
-int main(int argc, char *argv[])
-{   
-    printf("Running");
-    int portnumber;
-    char *root;
-    int sockfd;
-    int sockfd_current;
-    struct sockaddr_in sockIn;
-    struct sockaddr_in portIn;
-    int addrlen;
-    char ipaddr[INET_ADDRSTRLEN];
+    //main is used to setup socket and bind it, also initalise threadpool
 
-    ThreadPool threadpool;
+    int sockfd, newsockfd, yes = 1;
+    struct sockaddr_in addr, cli_addr;
+    socklen_t clilen = sizeof(cli_addr);
 
-    initializeThreadPool(&threadpool, THREAD_POOL_SIZE, SIZE);
 
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s <port> <root_directory>\n", argv[0]);
+    //getopt_long() stuff
+    processArguments(argc, argv);
+
+
+    //it doesnt matter what the server prints right?
+    printf("Port: %d\n", port);
+    printf("wwwRoot: %s\n", wwwRoot);
+    printf("NumThreads: %d\n", numThreads);
+    printf("Timeout: %d\n", timeout);
+    printf("CGI Program: %s\n", cgiProgram);
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("ERROR: Socket creation failed");
         exit(1);
     }
 
-    portnumber = atoi(argv[1]);
-    root = argv[2];
-
-    if((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)  
-    {   
-        perror ("socket");
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
+        perror("ERROR: setsockopt failed");
         exit(1);
     }
 
-    memset(&sockIn, 0, sizeof(sockIn)); 
-    sockIn.sin_family= AF_INET;
-    sockIn.sin_addr.s_addr =INADDR_ANY;
-    sockIn.sin_port = htons(portnumber); 
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
 
-    if(bind(sockfd, (struct sockaddr *) &sockIn, sizeof(sockIn)) == -1)
-    {
-        perror("bind");
+    if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("ERROR: Bind failed");
         exit(1);
     }
 
-    if(listen(sockfd, 10) == -1)  
-    {
-        perror("listen");
+    if (listen(sockfd, MAX_CONNECTIONS) < 0) {
+        perror("ERROR: Listen failed");
         exit(1);
     }
-    addrlen = sizeof(portIn);
 
-    for (int i = 0; i < THREAD_POOL_SIZE; ++i) {
-        if (pthread_create(&threadpool.threads[i], NULL, worker, (void *)&threadpool) != 0) {
-            perror("pthread_create");
+    ThreadPool pool;
+    pool.front = pool.rear = pool.num_tasks = 0;
+    pool.shutdown = 0;
+    pool.threads = (pthread_t *)malloc(NUM_THREADS * sizeof(pthread_t));
+
+    pthread_mutex_init(&pool.queue_mutex, NULL);
+    pthread_cond_init(&pool.queue_cond, NULL);
+
+    for (int i = 0; i < NUM_THREADS; i++) {
+        pthread_create(&pool.threads[i], NULL, workerThread, &pool);
+    }
+
+    struct pollfd fds[1];
+    int ret;
+
+    while (1) {//persistent connection
+
+        fds[0].fd = sockfd;
+        fds[0].events = POLLIN;
+
+        //Handle timeouts
+        ret = poll(fds, 1, timeout * 1000); 
+
+        if (ret == -1) {
+            perror("ERROR: Poll failed");
+            exit(1);
+        } else if (ret == 0) {
+            printf("Timeout occurred\n");
+            continue;
+        } 
+
+        newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
+        if (newsockfd < 0) {
+            perror("ERROR: Accept failed");
             exit(1);
         }
+
+        printf("adding task:\n");
+
+        //Add task to threadpool
+        addTask(&pool, newsockfd, wwwRoot, cli_addr, "127.0.0.1");
     }
 
+    for (int i = 0; i < NUM_THREADS; i++) {
 
-    while(1){
-
-        if((sockfd_current = accept(sockfd, (struct sockaddr*) &portIn, (socklen_t*) &addrlen)) == -1)  //trying to Create a new socket for the accepted client
-        {
-            perror("accept");
-            exit(1);
-        }
-
-        struct TaskArguments *stuff = malloc(sizeof(struct TaskArguments));
-        stuff->root = root;
-        stuff->sockfd_current = sockfd_current;
-        stuff->portIn = portIn;
-        strcpy(stuff->ipAddress, ipaddr);
-
-        submitTask(&threadpool, handleConnection, stuff);
-    
+        //1000
+        pthread_join(pool.threads[i], NULL);
     }
 
-    shutdownThreadPool(&threadpool);
+    pthread_mutex_destroy(&pool.queue_mutex);
+    pthread_cond_destroy(&pool.queue_cond);
+
     close(sockfd);
     return 0;
 }
-
-//     pthread_create()
-//         Creates a new thread.
-//         Syntax: int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg);
-//         Parameters:
-//             thread: Pointer to a pthread_t variable where the thread ID will be stored.
-//             attr: Thread attributes (usually NULL for default attributes).
-//             start_routine: Function the thread will execute.
-//             arg: Argument passed to the start_routine.
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_join()
-//         Waits for a thread to terminate.
-//         Syntax: int pthread_join(pthread_t thread, void **retval);
-//         Parameters:
-//             thread: Thread ID of the thread to wait for.
-//             retval: Pointer to store the exit status of the joined thread.
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_detach()
-//         Marks a thread as detached (thread resources are automatically released when the thread terminates).
-//         Syntax: int pthread_detach(pthread_t thread);
-//         Parameters:
-//             thread: Thread ID of the thread to detach.
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_exit()
-//         Terminates the calling thread.
-//         Syntax: void pthread_exit(void *retval);
-//         Parameter:
-//             retval: Exit status of the thread.
-
-// Synchronization and Mutual Exclusion
-
-//     pthread_mutex_init()
-//         Initializes a mutex.
-//         Syntax: int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr);
-//         Parameters:
-//             mutex: Pointer to the mutex object to be initialized.
-//             attr: Mutex attributes (usually NULL for default attributes).
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_mutex_lock()
-//         Locks a mutex, waits if the mutex is already locked by another thread.
-//         Syntax: int pthread_mutex_lock(pthread_mutex_t *mutex);
-//         Parameter:
-//             mutex: Mutex to be locked.
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_mutex_unlock()
-//         Unlocks a mutex.
-//         Syntax: int pthread_mutex_unlock(pthread_mutex_t *mutex);
-//         Parameter:
-//             mutex: Mutex to be unlocked.
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_mutex_destroy()
-//         Destroys a mutex, freeing associated resources.
-//         Syntax: int pthread_mutex_destroy(pthread_mutex_t *mutex);
-//         Parameter:
-//             mutex: Mutex to be destroyed.
-//         Returns 0 on success, otherwise an error number.
-
-// Condition Variables
-
-//     pthread_cond_init()
-//         Initializes a condition variable.
-//         Syntax: int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr);
-//         Parameters:
-//             cond: Pointer to the condition variable object to be initialized.
-//             attr: Condition variable attributes (usually NULL for default attributes).
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_cond_wait()
-//         Waits on a condition variable, atomically releases the associated mutex and waits for a signal.
-//         Syntax: int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex);
-//         Parameters:
-//             cond: Condition variable to wait on.
-//             mutex: Associated mutex to be unlocked while waiting.
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_cond_signal()
-//         Signals one thread waiting on a condition variable.
-//         Syntax: int pthread_cond_signal(pthread_cond_t *cond);
-//         Parameter:
-//             cond: Condition variable to signal.
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_cond_broadcast()
-//         Signals all threads waiting on a condition variable.
-//         Syntax: int pthread_cond_broadcast(pthread_cond_t *cond);
-//         Parameter:
-//             cond: Condition variable to broadcast.
-//         Returns 0 on success, otherwise an error number.
-
-//     pthread_cond_destroy()
-//         Destroys a condition variable, freeing associated resources.
-//         Syntax: int pthread_cond_destroy(pthread_cond_t *cond);
-//         Parameter:
-//             cond: Condition variable to be destroyed.
-//         Returns 0 on success, otherwise an error number.
