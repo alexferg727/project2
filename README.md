@@ -12,4 +12,7 @@ I put a lot of effort and brainpower into this.
 
 Apache benchmark tests + curl for cgi hello.py, banner.py and dumper.py dont seem to work
 
+![image](https://github.com/alexferg727/project2/assets/99629668/5bae0a9b-377a-4a87-adb0-e0e919d781fd)
 
+
+my dad - a software dev
